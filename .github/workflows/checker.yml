@@ -2,7 +2,7 @@ name: Event Checker Ca Foscari
 
 on:
   schedule:
-    - cron: '0 * * * *' # Esegue lo script ogni ora al minuto 0
+    - cron: '17 * * * *' # Esegue lo script ogni ora al minuto 17, evitando l'inizio dell'ora
   workflow_dispatch: # Permette l'avvio manuale dalla scheda Actions di GitHub
 
 jobs:
