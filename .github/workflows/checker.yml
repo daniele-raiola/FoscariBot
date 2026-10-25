@@ -1,0 +1,41 @@
+name: Event Checker Ca Foscari
+
+on:
+  schedule:
+    - cron: '0 * * * *' # Esegue lo script ogni ora al minuto 0
+  workflow_dispatch: # Permette l'avvio manuale dalla scheda Actions di GitHub
+
+jobs:
+  check-events:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Permette alle Actions di salvare le modifiche a notified_events.json
+
+    steps:
+      - name: Checkout del codice
+        uses: actions/checkout@v4
+
+      - name: Configura Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Installa dipendenze e Playwright
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 playwright
+          playwright install chromium --with-deps
+
+      - name: Esegui lo script
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py
+
+      - name: Salva registro eventi notificati
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add notified_events.json
+          git commit -m "Update notified_events.json [skip ci]" || exit 0
+          git push
