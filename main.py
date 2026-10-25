@@ -27,7 +27,7 @@ def send_telegram_message(text):
         print("Errore: TELEGRAM_TOKEN o TELEGRAM_CHAT_ID non impostati.")
         return False
     
-    url = f"https://api.telegram.org/bot8944112809/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
@@ -42,7 +42,8 @@ def fetch_all_events():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
-        page.goto(TARGET_URL, wait_until="networkidle")
+        page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(2000)
         
         # Clicca sul pulsante "Carica altri" finché è presente nella pagina
         while True:
