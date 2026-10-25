@@ -1,5 +1,6 @@
 import os
 import json
+import html
 import requests
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
@@ -24,8 +25,7 @@ def save_notified_events(events_set):
 
 def send_telegram_message(text):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Errore: TELEGRAM_TOKEN o TELEGRAM_CHAT_ID non impostati.")
-        return False
+        raise RuntimeError("TELEGRAM_TOKEN o TELEGRAM_CHAT_ID non impostati.")
     
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
@@ -33,8 +33,28 @@ def send_telegram_message(text):
         "text": text,
         "parse_mode": "HTML"
     }
-    response = requests.post(url, json=payload)
-    return response.ok
+    try:
+        response = requests.post(url, json=payload, timeout=20)
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            f"Errore di rete durante l'invio a Telegram ({type(exc).__name__})."
+        ) from None
+
+    try:
+        result = response.json()
+    except ValueError:
+        raise RuntimeError(
+            f"Telegram ha restituito HTTP {response.status_code} e una risposta non valida."
+        ) from None
+
+    if not response.ok or not isinstance(result, dict) or result.get("ok") is not True:
+        description = result.get("description") if isinstance(result, dict) else None
+        raise RuntimeError(
+            f"Telegram ha rifiutato il messaggio (HTTP {response.status_code}): "
+            f"{description or 'risposta non valida'}."
+        )
+
+    return True
 
 def fetch_all_events():
     events = []
@@ -96,19 +116,20 @@ def main():
         if event["id"] not in notified_events:
             msg = (
                 f"<b>Nuovo evento Ca' Foscari!</b>\n\n"
-                f"📌 <b>{event['title']}</b>\n"
-                f"🔗 <a href='{event['url']}'>Apri dettaglio evento</a>"
+                f"📌 <b>{html.escape(event['title'])}</b>\n"
+                f"🔗 <a href='{html.escape(event['url'], quote=True)}'>Apri dettaglio evento</a>"
             )
             print(f"Invio notifica Telegram per: {event['title']}")
             if send_telegram_message(msg):
                 notified_events.add(event["id"])
                 new_found = True
+                save_notified_events(notified_events)
+                print(f"Notifica Telegram inviata per: {event['title']}")
     
-    if new_found:
-        save_notified_events(notified_events)
-        print("File degli eventi notificati aggiornato.")
-    else:
+    if not new_found:
         print("Nessun nuovo evento da notificare.")
+    else:
+        print("File degli eventi notificati aggiornato.")
 
 if __name__ == "__main__":
     main()
