@@ -27,7 +27,7 @@ def send_telegram_message(text):
         print("Errore: TELEGRAM_TOKEN o TELEGRAM_CHAT_ID non impostati.")
         return False
     
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot8944112809/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
