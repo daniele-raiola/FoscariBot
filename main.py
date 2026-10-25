@@ -24,28 +24,48 @@ def save_notified_events(events_set):
         json.dump(list(events_set), f, ensure_ascii=False, indent=2)
 
 def send_telegram_message(text):
+    global TELEGRAM_CHAT_ID
+
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         raise RuntimeError("TELEGRAM_TOKEN o TELEGRAM_CHAT_ID non impostati.")
     
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML"
-    }
-    try:
-        response = requests.post(url, json=payload, timeout=20)
-    except requests.RequestException as exc:
-        raise RuntimeError(
-            f"Errore di rete durante l'invio a Telegram ({type(exc).__name__})."
-        ) from None
+    def post_message(chat_id):
+        payload = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML"
+        }
+        try:
+            response = requests.post(url, json=payload, timeout=20)
+        except requests.RequestException as exc:
+            raise RuntimeError(
+                f"Errore di rete durante l'invio a Telegram ({type(exc).__name__})."
+            ) from None
 
-    try:
-        result = response.json()
-    except ValueError:
-        raise RuntimeError(
-            f"Telegram ha restituito HTTP {response.status_code} e una risposta non valida."
-        ) from None
+        try:
+            result = response.json()
+        except ValueError:
+            raise RuntimeError(
+                f"Telegram ha restituito HTTP {response.status_code} e una risposta non valida."
+            ) from None
+        return response, result
+
+    response, result = post_message(TELEGRAM_CHAT_ID)
+    if isinstance(result, dict) and result.get("ok") is not True:
+        parameters = result.get("parameters")
+        migrated_chat_id = (
+            parameters.get("migrate_to_chat_id")
+            if isinstance(parameters, dict)
+            else None
+        )
+        if migrated_chat_id is not None:
+            TELEGRAM_CHAT_ID = str(migrated_chat_id)
+            print(
+                "Telegram ha migrato il gruppo. Invio di nuovo al nuovo ID; "
+                "aggiorna TELEGRAM_CHAT_ID nei GitHub Actions secrets."
+            )
+            response, result = post_message(TELEGRAM_CHAT_ID)
 
     if not response.ok or not isinstance(result, dict) or result.get("ok") is not True:
         description = result.get("description") if isinstance(result, dict) else None
