@@ -85,19 +85,14 @@ def fetch_all_events():
         page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(2000)
         
-        # Clicca sul pulsante "Carica altri" finché è presente nella pagina
+        # Il pulsante carica gli eventi successivi inviando il form e ricaricando la pagina.
         while True:
-            # Cerca i possibili selettori/testi usati per il caricamento dinamico
-            load_more_btn = page.locator("a:has-text('Carica altri'), button:has-text('Carica altri'), .carica-altri")
-            if load_more_btn.count() > 0 and load_more_btn.first.is_visible():
-                try:
-                    load_more_btn.first.click()
-                    page.wait_for_timeout(2000) # Attesa caricamento dei nuovi eventi
-                except Exception as e:
-                    print(f"Nessun altro evento da caricare o fine lista: {e}")
-                    break
-            else:
+            load_more_btn = page.locator("#altri")
+            if load_more_btn.count() == 0 or not load_more_btn.is_visible():
                 break
+
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=60000):
+                load_more_btn.click()
                 
         content = page.content()
         browser.close()
