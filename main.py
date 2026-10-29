@@ -87,6 +87,11 @@ def fetch_all_events():
         
         # Il pulsante carica gli eventi successivi inviando il form e ricaricando la pagina.
         while True:
+            cookie_modal = page.locator("#cookieModal")
+            if cookie_modal.is_visible():
+                cookie_modal.get_by_role("button", name="Close").click()
+                cookie_modal.wait_for(state="hidden")
+
             load_more_btn = page.locator("#altri")
             if load_more_btn.count() == 0 or not load_more_btn.is_visible():
                 break
