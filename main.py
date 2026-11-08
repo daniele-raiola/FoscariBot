@@ -1,6 +1,9 @@
 import os
 import json
 import html
+import re
+from datetime import date, datetime, time, timedelta
+from urllib.parse import urlencode
 import requests
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
@@ -9,6 +12,32 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DATA_FILE = "notified_events.json"
 TARGET_URL = "https://www.unive.it/data/agenda/8/"
+ITALIAN_MONTHS = (
+    "gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
+    "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"
+)
+ITALIAN_WEEKDAYS = (
+    "lunedì", "martedì", "mercoledì", "giovedì",
+    "venerdì", "sabato", "domenica"
+)
+MONTH_NUMBERS = {
+    name: month
+    for month, names in enumerate((
+        ("jan", "january", "gen", "gennaio"),
+        ("feb", "february", "febbraio"),
+        ("mar", "march", "marzo"),
+        ("apr", "april", "aprile"),
+        ("may", "maggio"),
+        ("jun", "june", "giu", "giugno"),
+        ("jul", "july", "lug", "luglio"),
+        ("aug", "august", "ago", "agosto"),
+        ("sep", "september", "set", "settembre"),
+        ("oct", "october", "ott", "ottobre"),
+        ("nov", "november", "novembre"),
+        ("dec", "december", "dic", "dicembre"),
+    ), start=1)
+    for name in names
+}
 
 def load_notified_events():
     if os.path.exists(DATA_FILE):
@@ -22,6 +51,58 @@ def load_notified_events():
 def save_notified_events(events_set):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(list(events_set), f, ensure_ascii=False, indent=2)
+
+
+def parse_event_date(date_text):
+    match = re.fullmatch(r"(\d{1,2})\s+([A-Za-zÀ-ÿ.]+)\s+(\d{4})", date_text.strip())
+    if not match:
+        raise ValueError(f"Formato data non riconosciuto: {date_text!r}")
+
+    day, month_name, year = match.groups()
+    month = MONTH_NUMBERS.get(month_name.lower().rstrip("."))
+    if month is None:
+        raise ValueError(f"Mese non riconosciuto nella data: {date_text!r}")
+    return date(int(year), month, int(day))
+
+
+def format_event_date(event_date):
+    weekday = ITALIAN_WEEKDAYS[event_date.weekday()]
+    month = ITALIAN_MONTHS[event_date.month - 1]
+    return f"{weekday} {event_date.day} {month} {event_date.year}"
+
+
+def build_google_calendar_url(event):
+    event_date = event.get("date")
+    if event_date is None:
+        return None
+
+    event_time = event.get("time")
+    if event_time is None:
+        dates = (
+            f"{event_date:%Y%m%d}/"
+            f"{event_date + timedelta(days=1):%Y%m%d}"
+        )
+    else:
+        start = datetime.combine(event_date, event_time)
+        end = start + timedelta(hours=1)
+        dates = f"{start:%Y%m%dT%H%M%S}/{end:%Y%m%dT%H%M%S}"
+
+    details = f"Dettagli: {event['url']}"
+    if event_time is not None:
+        details += "\nDurata preimpostata: 1 ora (modificabile)."
+
+    params = {
+        "action": "TEMPLATE",
+        "text": event["title"],
+        "dates": dates,
+        "ctz": "Europe/Rome",
+        "details": details,
+    }
+    if event.get("location"):
+        params["location"] = event["location"]
+
+    return "https://calendar.google.com/calendar/render?" + urlencode(params)
+
 
 def send_telegram_message(text):
     global TELEGRAM_CHAT_ID
@@ -113,14 +194,58 @@ def fetch_all_events():
             
             if not title or len(title) < 3:
                 continue
-                
+
+            event_date = None
+            event_time = None
+            location = ""
+            event_card = a_tag.find_parent("div", class_="evento")
+            if event_card is None:
+                print(f"Impossibile trovare la scheda dell'evento {full_url}.")
+            else:
+                date_element = event_card.select_one(".card-header strong")
+                time_element = event_card.select_one(".card-header .float-end")
+                location_element = event_card.select_one(".card-text")
+
+                if date_element is None:
+                    print(f"Data non trovata nella scheda dell'evento {full_url}.")
+                else:
+                    try:
+                        event_date = parse_event_date(
+                            date_element.get_text(" ", strip=True)
+                        )
+                    except ValueError as exc:
+                        print(f"Impossibile leggere la data dell'evento {full_url}: {exc}")
+
+                if time_element is not None:
+                    time_match = re.search(
+                        r"\b(\d{1,2}):(\d{2})\b",
+                        time_element.get_text(" ", strip=True)
+                    )
+                    if time_match:
+                        try:
+                            event_time = time(
+                                int(time_match.group(1)),
+                                int(time_match.group(2))
+                            )
+                        except ValueError as exc:
+                            print(
+                                f"Impossibile leggere l'orario dell'evento "
+                                f"{full_url}: {exc}"
+                            )
+
+                if location_element is not None:
+                    location = location_element.get_text(" ", strip=True)
+
             event_id = full_url.rstrip("/")
             
             if not any(e["id"] == event_id for e in events):
                 events.append({
                     "id": event_id,
                     "title": title,
-                    "url": full_url
+                    "url": full_url,
+                    "date": event_date,
+                    "time": event_time,
+                    "location": location
                 })
                 
     return events
@@ -134,10 +259,29 @@ def main():
     
     for event in current_events:
         if event["id"] not in notified_events:
+            event_date = event.get("date")
+            event_time = event.get("time")
+            when = (
+                format_event_date(event_date)
+                if event_date is not None
+                else "Data non disponibile"
+            )
+            if event_time is not None:
+                when += f", alle {event_time:%H:%M}"
+
+            calendar_url = build_google_calendar_url(event)
+            calendar_link = (
+                f"\n📅 <a href='{html.escape(calendar_url, quote=True)}'>"
+                "Aggiungi a Google Calendar</a>"
+                if calendar_url
+                else ""
+            )
             msg = (
-                f"<b>Nuovo evento Ca' Foscari!</b>\n\n"
+                f"<b>Nuovo evento nell'Agenda!</b>\n\n"
                 f"📌 <b>{html.escape(event['title'])}</b>\n"
+                f"🗓️ <b>Quando:</b> {html.escape(when)}\n"
                 f"🔗 <a href='{html.escape(event['url'], quote=True)}'>Apri dettaglio evento</a>"
+                f"{calendar_link}"
             )
             print(f"Invio notifica Telegram per: {event['title']}")
             if send_telegram_message(msg):
