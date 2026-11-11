@@ -277,7 +277,7 @@ def main():
                 else ""
             )
             msg = (
-                f"<b>Nuovo evento nell'Agenda!</b>\n\n"
+                f"<b>Nuovo evento nell'Agenda!!</b>\n\n"
                 f"📌 <b>{html.escape(event['title'])}</b>\n"
                 f"🗓️ <b>Quando:</b> {html.escape(when)}\n"
                 f"🔗 <a href='{html.escape(event['url'], quote=True)}'>Apri dettaglio evento</a>"
