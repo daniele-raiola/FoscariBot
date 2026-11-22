@@ -163,7 +163,7 @@ def fetch_all_events():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
-        page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=60000)
+        page.goto(TARGET_URL, wait_until="load", timeout=60000)
         page.wait_for_timeout(2000)
         
         # Il pulsante carica gli eventi successivi inviando il form e ricaricando la pagina.
@@ -177,7 +177,7 @@ def fetch_all_events():
             if load_more_btn.count() == 0 or not load_more_btn.is_visible():
                 break
 
-            with page.expect_navigation(wait_until="domcontentloaded", timeout=60000):
+            with page.expect_navigation(wait_until="load", timeout=60000):
                 load_more_btn.click()
                 
         content = page.content()
