@@ -6,7 +6,6 @@ from datetime import date, datetime, time, timedelta
 from urllib.parse import urlencode
 import requests
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -159,95 +158,101 @@ def send_telegram_message(text):
 
 def fetch_all_events():
     events = []
-    
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.goto(TARGET_URL, wait_until="load", timeout=60000)
-        page.wait_for_timeout(2000)
-        
-        # Il pulsante carica gli eventi successivi inviando il form e ricaricando la pagina.
+    event_ids = set()
+    page_number = 1
+
+    with requests.Session() as session:
         while True:
-            cookie_modal = page.locator("#cookieModal")
-            if cookie_modal.is_visible():
-                cookie_modal.get_by_role("button", name="Close").click()
-                cookie_modal.wait_for(state="hidden")
+            response = session.get(
+                TARGET_URL,
+                params={"pagina": page_number},
+                timeout=60
+            )
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, "html.parser")
+            new_events = 0
 
-            load_more_btn = page.locator("#altri")
-            if load_more_btn.count() == 0 or not load_more_btn.is_visible():
-                break
+            # Estrazione dei link agli eventi
+            for a_tag in soup.find_all("a", href=True):
+                href = a_tag["href"]
+                if (
+                    "/data/agenda/8/" not in href
+                    or href in ("/data/agenda/8/", TARGET_URL)
+                ):
+                    continue
 
-            with page.expect_navigation(wait_until="load", timeout=60000):
-                load_more_btn.click()
-                
-        content = page.content()
-        browser.close()
-        
-    soup = BeautifulSoup(content, "html.parser")
-    
-    # Estrazione dei link agli eventi
-    for a_tag in soup.find_all("a", href=True):
-        href = a_tag["href"]
-        if "/data/agenda/8/" in href and href != "/data/agenda/8/" and href != TARGET_URL:
-            full_url = href if href.startswith("http") else f"https://www.unive.it{href}"
-            title = a_tag.get_text(strip=True)
-            
-            if not title or len(title) < 3:
-                continue
+                full_url = (
+                    href if href.startswith("http")
+                    else f"https://www.unive.it{href}"
+                )
+                title = a_tag.get_text(strip=True)
 
-            event_date = None
-            event_time = None
-            location = ""
-            event_card = a_tag.find_parent("div", class_="evento")
-            if event_card is None:
-                print(f"Impossibile trovare la scheda dell'evento {full_url}.")
-            else:
-                date_element = event_card.select_one(".card-header strong")
-                time_element = event_card.select_one(".card-header .float-end")
-                location_element = event_card.select_one(".card-text")
+                if not title or len(title) < 3:
+                    continue
 
-                if date_element is None:
-                    print(f"Data non trovata nella scheda dell'evento {full_url}.")
+                event_date = None
+                event_time = None
+                location = ""
+                event_card = a_tag.find_parent("div", class_="evento")
+                if event_card is None:
+                    print(f"Impossibile trovare la scheda dell'evento {full_url}.")
                 else:
-                    try:
-                        event_date = parse_event_date(
-                            date_element.get_text(" ", strip=True)
-                        )
-                    except ValueError as exc:
-                        print(f"Impossibile leggere la data dell'evento {full_url}: {exc}")
+                    date_element = event_card.select_one(".card-header strong")
+                    time_element = event_card.select_one(".card-header .float-end")
+                    location_element = event_card.select_one(".card-text")
 
-                if time_element is not None:
-                    time_match = re.search(
-                        r"\b(\d{1,2}):(\d{2})\b",
-                        time_element.get_text(" ", strip=True)
-                    )
-                    if time_match:
+                    if date_element is None:
+                        print(f"Data non trovata nella scheda dell'evento {full_url}.")
+                    else:
                         try:
-                            event_time = time(
-                                int(time_match.group(1)),
-                                int(time_match.group(2))
+                            event_date = parse_event_date(
+                                date_element.get_text(" ", strip=True)
                             )
                         except ValueError as exc:
-                            print(
-                                f"Impossibile leggere l'orario dell'evento "
-                                f"{full_url}: {exc}"
-                            )
+                            print(f"Impossibile leggere la data dell'evento {full_url}: {exc}")
 
-                if location_element is not None:
-                    location = location_element.get_text(" ", strip=True)
+                    if time_element is not None:
+                        time_match = re.search(
+                            r"\b(\d{1,2}):(\d{2})\b",
+                            time_element.get_text(" ", strip=True)
+                        )
+                        if time_match:
+                            try:
+                                event_time = time(
+                                    int(time_match.group(1)),
+                                    int(time_match.group(2))
+                                )
+                            except ValueError as exc:
+                                print(
+                                    f"Impossibile leggere l'orario dell'evento "
+                                    f"{full_url}: {exc}"
+                                )
 
-            event_id = full_url.rstrip("/")
-            
-            if not any(e["id"] == event_id for e in events):
-                events.append({
-                    "id": event_id,
-                    "title": title,
-                    "url": full_url,
-                    "date": event_date,
-                    "time": event_time,
-                    "location": location
-                })
-                
+                    if location_element is not None:
+                        location = location_element.get_text(" ", strip=True)
+
+                event_id = full_url.rstrip("/")
+                if event_id not in event_ids:
+                    event_ids.add(event_id)
+                    events.append({
+                        "id": event_id,
+                        "title": title,
+                        "url": full_url,
+                        "date": event_date,
+                        "time": event_time,
+                        "location": location
+                    })
+                    new_events += 1
+
+            if soup.select_one("#altri") is None:
+                break
+            if new_events == 0:
+                raise RuntimeError(
+                    f"La pagina {page_number} non contiene nuovi eventi "
+                    "ma il sito segnala altre pagine."
+                )
+            page_number += 1
+
     return events
 
 def main():
