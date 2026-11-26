@@ -3,6 +3,7 @@ import json
 import html
 import re
 from datetime import date, datetime, time, timedelta
+from time import sleep
 from urllib.parse import urlencode
 import requests
 from bs4 import BeautifulSoup
@@ -116,12 +117,22 @@ def send_telegram_message(text):
             "text": text,
             "parse_mode": "HTML"
         }
-        try:
-            response = requests.post(url, json=payload, timeout=20)
-        except requests.RequestException as exc:
-            raise RuntimeError(
-                f"Errore di rete durante l'invio a Telegram ({type(exc).__name__})."
-            ) from None
+        for attempt in range(3):
+            try:
+                response = requests.post(url, json=payload, timeout=20)
+                break
+            except requests.RequestException as exc:
+                if attempt == 2:
+                    raise RuntimeError(
+                        "Errore di rete durante l'invio a Telegram "
+                        f"({type(exc).__name__}) dopo 3 tentativi."
+                    ) from None
+                delay = 2 ** (attempt + 1)
+                print(
+                    f"Errore di rete Telegram ({type(exc).__name__}); "
+                    f"nuovo tentativo tra {delay} secondi."
+                )
+                sleep(delay)
 
         try:
             result = response.json()
